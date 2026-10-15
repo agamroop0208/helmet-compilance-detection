@@ -14,8 +14,12 @@ class HelmetDetectorService:
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(HelmetDetectorService, cls).__new__(cls)
-            torch.set_num_threads(1)
+            torch.set_num_threads(2)
+            torch.set_num_interop_threads(1)
             cls._model = YOLO(str(MODEL_PATH))
+            # Warmup inference to initialize CUDA/CPU graph caches
+            dummy = np.zeros((320, 320, 3), dtype=np.uint8)
+            cls._model.predict(source=dummy, imgsz=320, verbose=False)
         return cls._instance
 
     def is_ready(self) -> bool:
@@ -28,7 +32,7 @@ class HelmetDetectorService:
             raise ValueError("Invalid image file buffer.")
 
         h, w = frame.shape[:2]
-        max_dim = 800
+        max_dim = 640
         if max(h, w) > max_dim:
             scale = max_dim / float(max(h, w))
             frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
@@ -39,7 +43,7 @@ class HelmetDetectorService:
                 source=frame,
                 conf=conf,
                 iou=iou,
-                imgsz=480,
+                imgsz=320,
                 device="cpu",
                 verbose=False
             )
@@ -48,7 +52,7 @@ class HelmetDetectorService:
         res = results[0]
         annotated_bgr = res.plot()
 
-        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 85]
+        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 80]
         _, buffer = cv2.imencode(".jpg", annotated_bgr, encode_params)
         b64_img = base64.b64encode(buffer).decode("utf-8")
 
