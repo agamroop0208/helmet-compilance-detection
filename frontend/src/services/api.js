@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || "https://helmet-compilance-detection.onrender.com/api",
+  baseURL: "https://helmet-compilance-detection.onrender.com/api",
 });
 
 export const checkHealth = async () => {
