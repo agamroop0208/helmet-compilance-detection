@@ -1,0 +1,8 @@
+services:
+  backend:
+    build: .
+    ports:
+      - "8000:7860"
+    volumes:
+      - ./models:/workspace/models
+    restart: unless-stopped
