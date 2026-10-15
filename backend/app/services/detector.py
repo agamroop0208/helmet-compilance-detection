@@ -1,67 +1,85 @@
-import cv2
-import base64
 import time
+import base64
+import gc
+import cv2
 import numpy as np
-from pathlib import Path
+import torch
 from ultralytics import YOLO
+from app.core.config import MODEL_PATH
 
-class HelmetDetector:
+class HelmetDetectorService:
     _instance = None
+    _model = None
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super(HelmetDetector, cls).__new__(cls)
-            base_dir = Path(__file__).resolve().parent.parent.parent.parent
-            model_path = base_dir / "models" / "best.pt"
-            if not model_path.exists():
-                raise FileNotFoundError(f"Model weights not found at {model_path}")
-            cls._instance.model = YOLO(str(model_path))
+            cls._instance = super(HelmetDetectorService, cls).__new__(cls)
+            torch.set_num_threads(1)
+            cls._model = YOLO(str(MODEL_PATH))
         return cls._instance
 
-    def predict_image(self, image_bytes: bytes, conf: float = 0.45, iou: float = 0.45):
+    def is_ready(self) -> bool:
+        return self._model is not None
+
+    def predict_image(self, image_bytes: bytes, conf: float = 0.35, iou: float = 0.45) -> dict:
         np_arr = np.frombuffer(image_bytes, np.uint8)
-        orig_bgr = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        if frame is None:
+            raise ValueError("Invalid image file buffer.")
 
-        t0 = time.perf_counter()
-        results = self.model.predict(source=orig_bgr, conf=conf, iou=iou, verbose=False)
-        latency_ms = round((time.perf_counter() - t0) * 1000, 1)
+        h, w = frame.shape[:2]
+        max_dim = 800
+        if max(h, w) > max_dim:
+            scale = max_dim / float(max(h, w))
+            frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
 
-        counts = {"helmet": 0, "no_helmet": 0, "person": 0}
-        detections = []
+        start = time.perf_counter()
+        with torch.no_grad():
+            results = self._model.predict(
+                source=frame,
+                conf=conf,
+                iou=iou,
+                imgsz=480,
+                device="cpu",
+                verbose=False
+            )
+        inference_ms = round((time.perf_counter() - start) * 1000, 2)
 
-        if results and len(results[0].boxes) > 0:
-            boxes = results[0].boxes
-            for i in range(len(boxes)):
-                cls_id = int(boxes.cls[i].item())
-                score = round(float(boxes.conf[i].item()), 3)
-                label = self.model.names.get(cls_id, str(cls_id)).lower()
-                bbox = [round(x, 1) for x in boxes.xyxy[i].tolist()]
+        res = results[0]
+        annotated_bgr = res.plot()
 
-                if "no" in label or "without" in label:
-                    counts["no_helmet"] += 1
-                elif "helmet" in label:
-                    counts["helmet"] += 1
-                elif "person" in label or "rider" in label or "motor" in label:
-                    counts["person"] += 1
-
-                detections.append({
-                    "id": i + 1,
-                    "class_name": self.model.names.get(cls_id, str(cls_id)),
-                    "confidence": score,
-                    "bbox": bbox
-                })
-
-        annotated_bgr = results[0].plot()
-        _, buffer = cv2.imencode(".jpg", annotated_bgr)
+        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 85]
+        _, buffer = cv2.imencode(".jpg", annotated_bgr, encode_params)
         b64_img = base64.b64encode(buffer).decode("utf-8")
 
+        detections = []
+        class_counts = {}
+        names = res.names
+
+        if res.boxes is not None:
+            for box in res.boxes:
+                cls_id = int(box.cls[0].item())
+                cls_name = names.get(cls_id, f"class_{cls_id}")
+                score = round(float(box.conf[0].item()), 4)
+                coords = [round(float(x), 1) for x in box.xyxy[0].tolist()]
+
+                class_counts[cls_name] = class_counts.get(cls_name, 0) + 1
+                detections.append({
+                    "class_id": cls_id,
+                    "class_name": cls_name,
+                    "confidence": score,
+                    "bbox": coords
+                })
+
+        del results, res, frame, annotated_bgr
+        gc.collect()
+
         return {
-            "status": "VIOLATION" if counts["no_helmet"] > 0 else "COMPLIANT",
-            "latency_ms": latency_ms,
-            "fps": round(1000.0 / max(latency_ms, 1), 1),
-            "counts": counts,
+            "total_objects": len(detections),
+            "class_counts": class_counts,
+            "inference_time_ms": inference_ms,
             "detections": detections,
             "annotated_image": f"data:image/jpeg;base64,{b64_img}"
         }
 
-detector = HelmetDetector()
+detector_service = HelmetDetectorService()
