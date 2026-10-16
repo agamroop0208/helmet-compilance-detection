@@ -1,230 +1,238 @@
-import React, { useState, useEffect } from "react";
-import { analyzeImage, checkHealth } from "./services/api";
-import { Upload, Download, Eye } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import { checkHealth, analyzeImage } from "./services/api";
 
 export default function App() {
+  const [apiReady, setApiReady] = useState(false);
   const [file, setFile] = useState(null);
-  const [preview, setPreview] = useState(null);
-  const [conf, setConf] = useState(0.45);
-  const [iou, setIou] = useState(0.45);
+  const [previewUrl, setPreviewUrl] = useState(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
-  const [backendOnline, setBackendOnline] = useState(false);
-  const [showOriginal, setShowOriginal] = useState(false);
+  const [conf, setConf] = useState(0.35);
+  const [iou, setIou] = useState(0.45);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
-    checkHealth()
-      .then(() => setBackendOnline(true))
-      .catch(() => setBackendOnline(false));
+    let interval;
+    const poll = async () => {
+      try {
+        await checkHealth();
+        setApiReady(true);
+        if (interval) clearInterval(interval);
+      } catch (err) {
+        setApiReady(false);
+      }
+    };
+    poll();
+    interval = setInterval(poll, 4000);
+    return () => clearInterval(interval);
   }, []);
 
-  useEffect(() => {
-    if (file) runInference(file, conf, iou);
-  }, [file, conf, iou]);
-
   const handleFileChange = (e) => {
-    const selected = e.target.files[0];
-    if (!selected) return;
-    setFile(selected);
-    setPreview(URL.createObjectURL(selected));
-    setShowOriginal(false);
+    const selectedFile = e.target.files?.[0];
+    if (!selectedFile) return;
+
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+
+    setResult(null);
+    setFile(selectedFile);
+    setPreviewUrl(URL.createObjectURL(selectedFile));
   };
 
-  const runInference = async (imgFile, c, i) => {
+  const handleRunInference = async () => {
+    if (!file) return;
     setLoading(true);
+    setResult(null);
+
     try {
-      const data = await analyzeImage(imgFile, c, i);
+      const data = await analyzeImage(file, conf, iou);
       setResult(data);
     } catch (err) {
-      console.error("Inference error:", err);
+      console.error("Inference failure:", err);
+      alert("Inference failed. Check console for details.");
     } finally {
       setLoading(false);
     }
   };
 
-  const downloadCSV = () => {
+  const handleClear = () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setFile(null);
+    setPreviewUrl(null);
+    setResult(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const exportCSV = () => {
     if (!result?.detections?.length) return;
-    const headers = "ID,Class,Confidence,BBox_x1,BBox_y1,BBox_x2,BBox_y2\n";
+    const headers = "Class ID,Class Name,Confidence,X_Min,Y_Min,X_Max,Y_Max\n";
     const rows = result.detections
-      .map((d) => `${d.id},${d.class_name},${d.confidence},${d.bbox.join(",")}`)
+      .map((d) => `${d.class_id},${d.class_name},${d.confidence},${d.bbox.join(",")}`)
       .join("\n");
-    const blob = new Blob([headers + rows], { type: "text/csv" });
+    const blob = new Blob([headers + rows], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "detections.csv";
-    a.click();
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `compliance_audit_${Date.now()}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
-    <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col">
-      <header className="border-b border-zinc-800/80 px-8 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-2.5 h-2.5 rounded-full bg-white" />
-          <span className="font-semibold text-sm tracking-tight">Helmet Detection</span>
+    <div className="min-h-screen bg-[#090a0f] text-gray-200 flex flex-col font-sans">
+      <header className="border-b border-gray-800 px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center space-x-3">
+          <div className="w-3 h-3 rounded-full bg-indigo-500 animate-pulse" />
+          <h1 className="text-lg font-semibold tracking-wide text-white">
+            Helmet Detection Compliance Workspace
+          </h1>
         </div>
-
-        <div className="flex items-center gap-2 text-xs text-zinc-400">
-          <span className={`h-2 w-2 rounded-full ${backendOnline ? "bg-emerald-500" : "bg-rose-500"}`} />
-          <span>{backendOnline ? "Model Ready" : "API Offline"}</span>
+        <div className="flex items-center space-x-2">
+          <span
+            className={`w-2.5 h-2.5 rounded-full ${
+              apiReady ? "bg-emerald-500 shadow-emerald-500/50 shadow-sm" : "bg-rose-500 shadow-rose-500/50 shadow-sm"
+            }`}
+          />
+          <span className="text-xs text-gray-400 font-mono">
+            {apiReady ? "Model Ready" : "API Offline"}
+          </span>
         </div>
       </header>
 
-      <main className="max-w-6xl w-full mx-auto px-6 py-8 space-y-6">
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="bg-zinc-900/50 border border-zinc-800/80 rounded-xl p-4">
-            <span className="text-xs text-zinc-400">Status</span>
-            <p className={`text-lg font-semibold mt-1 ${
-              !result ? "text-zinc-500" : result.status === "VIOLATION" ? "text-rose-400" : "text-emerald-400"
-            }`}>
-              {result ? result.status : "Idle"}
-            </p>
+      <main className="flex-1 max-w-7xl w-full mx-auto p-6 grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <aside className="lg:col-span-1 space-y-6 bg-[#11131a] p-5 rounded-xl border border-gray-800">
+          <div>
+            <label className="text-xs font-semibold uppercase tracking-wider text-gray-400 block mb-2">
+              Source Media
+            </label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleFileChange}
+              className="text-sm text-gray-400 file:mr-3 file:py-2 file:px-4 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-gray-800 file:text-indigo-400 hover:file:bg-gray-700 cursor-pointer w-full"
+            />
           </div>
 
-          <div className="bg-zinc-900/50 border border-zinc-800/80 rounded-xl p-4">
-            <span className="text-xs text-zinc-400">With Helmet</span>
-            <p className="text-lg font-semibold text-zinc-100 mt-1">
-              {result ? result.counts.helmet : 0}
-            </p>
+          <div className="space-y-4">
+            <div>
+              <div className="flex justify-between text-xs text-gray-400 mb-1">
+                <span>Confidence Threshold</span>
+                <span className="font-mono text-indigo-400">{conf}</span>
+              </div>
+              <input
+                type="range"
+                min="0.1"
+                max="0.9"
+                step="0.05"
+                value={conf}
+                onChange={(e) => setConf(parseFloat(e.target.value))}
+                className="w-full accent-indigo-500"
+              />
+            </div>
+
+            <div>
+              <div className="flex justify-between text-xs text-gray-400 mb-1">
+                <span>NMS IoU Threshold</span>
+                <span className="font-mono text-indigo-400">{iou}</span>
+              </div>
+              <input
+                type="range"
+                min="0.1"
+                max="0.9"
+                step="0.05"
+                value={iou}
+                onChange={(e) => setIou(parseFloat(e.target.value))}
+                className="w-full accent-indigo-500"
+              />
+            </div>
           </div>
 
-          <div className="bg-zinc-900/50 border border-zinc-800/80 rounded-xl p-4">
-            <span className="text-xs text-zinc-400">No Helmet</span>
-            <p className="text-lg font-semibold text-zinc-100 mt-1">
-              {result ? result.counts.no_helmet : 0}
-            </p>
+          <div className="space-y-2 pt-2">
+            <button
+              onClick={handleRunInference}
+              disabled={!file || !apiReady || loading}
+              className="w-full py-2.5 px-4 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-sm text-white transition-colors"
+            >
+              {loading ? "Processing..." : "Run Inspection"}
+            </button>
+            <button
+              onClick={handleClear}
+              className="w-full py-2 px-4 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs text-gray-300 font-medium transition-colors"
+            >
+              Clear Workspace
+            </button>
           </div>
+        </aside>
 
-          <div className="bg-zinc-900/50 border border-zinc-800/80 rounded-xl p-4">
-            <span className="text-xs text-zinc-400">Inference Time</span>
-            <p className="text-lg font-semibold text-zinc-100 mt-1">
-              {result ? `${result.latency_ms} ms` : "—"}
-            </p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 bg-zinc-900/40 border border-zinc-800/80 rounded-2xl overflow-hidden flex flex-col">
-            <div className="px-5 py-3.5 border-b border-zinc-800/80 flex items-center justify-between">
-              <span className="text-xs font-medium text-zinc-400">Preview</span>
-              <div className="flex items-center gap-2">
-                {preview && (
-                  <button
-                    onClick={() => setShowOriginal(!showOriginal)}
-                    className="text-xs px-3 py-1.5 rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-300 hover:bg-zinc-800 flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Eye className="w-3.5 h-3.5" />
-                    {showOriginal ? "Annotated" : "Original"}
-                  </button>
+        <section className="lg:col-span-3 space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-[#11131a] rounded-xl border border-gray-800 p-4">
+              <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+                Selected Input
+              </h3>
+              <div className="aspect-video bg-black/40 rounded-lg flex items-center justify-center overflow-hidden border border-gray-800/60">
+                {previewUrl ? (
+                  <img src={previewUrl} alt="Source Preview" className="max-h-full object-contain" />
+                ) : (
+                  <span className="text-xs text-gray-600 font-mono">No input frame loaded</span>
                 )}
-                <label className="text-xs px-3 py-1.5 rounded-lg bg-white text-zinc-950 font-medium hover:bg-zinc-200 cursor-pointer flex items-center gap-1.5">
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>Upload Image</span>
-                  <input type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
-                </label>
               </div>
             </div>
 
-            <div className="relative h-[420px] flex items-center justify-center p-6 bg-zinc-950/50">
-              {preview ? (
-                <>
-                  <img
-                    src={showOriginal ? preview : result?.annotated_image || preview}
-                    alt="Detection preview"
-                    className="max-h-full max-w-full rounded-lg object-contain"
-                  />
-                  {loading && (
-                    <div className="absolute inset-0 bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center">
-                      <span className="text-xs text-zinc-300 font-medium">Analyzing...</span>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <label className="flex flex-col items-center justify-center text-center cursor-pointer p-8">
-                  <div className="w-10 h-10 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 mb-3">
-                    <Upload className="w-4 h-4" />
-                  </div>
-                  <span className="text-sm font-medium text-zinc-300">Select an image to analyze</span>
-                  <span className="text-xs text-zinc-500 mt-1">JPG or PNG</span>
-                  <input type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
-                </label>
-              )}
-            </div>
-
-            <div className="px-5 py-4 border-t border-zinc-800/80 grid grid-cols-1 sm:grid-cols-2 gap-6">
-              <div>
-                <div className="flex justify-between text-xs mb-1.5">
-                  <span className="text-zinc-400">Confidence</span>
-                  <span className="text-zinc-200 font-medium">{conf.toFixed(2)}</span>
-                </div>
-                <input
-                  type="range" min="0.10" max="0.95" step="0.05"
-                  value={conf}
-                  onChange={(e) => setConf(parseFloat(e.target.value))}
-                  className="w-full accent-white cursor-pointer h-1 bg-zinc-800 rounded-lg"
-                />
+            <div className="bg-[#11131a] rounded-xl border border-gray-800 p-4">
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                  Detection Output
+                </h3>
+                {result?.inference_time_ms && (
+                  <span className="text-xs font-mono text-emerald-400">
+                    {result.inference_time_ms} ms
+                  </span>
+                )}
               </div>
-
-              <div>
-                <div className="flex justify-between text-xs mb-1.5">
-                  <span className="text-zinc-400">IoU Threshold</span>
-                  <span className="text-zinc-200 font-medium">{iou.toFixed(2)}</span>
-                </div>
-                <input
-                  type="range" min="0.10" max="0.95" step="0.05"
-                  value={iou}
-                  onChange={(e) => setIou(parseFloat(e.target.value))}
-                  className="w-full accent-white cursor-pointer h-1 bg-zinc-800 rounded-lg"
-                />
+              <div className="aspect-video bg-black/40 rounded-lg flex items-center justify-center overflow-hidden border border-gray-800/60">
+                {result?.annotated_image ? (
+                  <img src={result.annotated_image} alt="Inference Output" className="max-h-full object-contain" />
+                ) : (
+                  <span className="text-xs text-gray-600 font-mono">
+                    {loading ? "Analyzing frame..." : "Pending detection"}
+                  </span>
+                )}
               </div>
             </div>
           </div>
 
-          <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-2xl flex flex-col overflow-hidden">
-            <div className="px-5 py-3.5 border-b border-zinc-800/80 flex items-center justify-between">
-              <span className="text-xs font-medium text-zinc-400">Detections</span>
-              {result?.detections?.length > 0 && (
+          {result && (
+            <div className="bg-[#11131a] rounded-xl border border-gray-800 p-5 space-y-4">
+              <div className="flex justify-between items-center">
+                <h3 className="text-sm font-medium text-white">Detection Telemetry</h3>
                 <button
-                  onClick={downloadCSV}
-                  className="text-xs text-zinc-400 hover:text-white flex items-center gap-1 cursor-pointer"
+                  onClick={exportCSV}
+                  className="text-xs px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 transition-colors font-mono"
                 >
-                  <Download className="w-3.5 h-3.5" /> CSV
+                  Export CSV
                 </button>
-              )}
-            </div>
+              </div>
 
-            <div className="flex-1 overflow-y-auto divide-y divide-zinc-800/60 max-h-[480px]">
-              {result?.detections?.length > 0 ? (
-                result.detections.map((d) => {
-                  const isViolation = d.class_name.toLowerCase().includes("no") || d.class_name.toLowerCase().includes("without");
-                  return (
-                    <div key={d.id} className="px-5 py-3.5 flex items-center justify-between text-sm">
-                      <div>
-                        <p className="font-medium text-zinc-200 capitalize">{d.class_name}</p>
-                        <p className="text-xs text-zinc-500 mt-0.5">
-                          Box: [{d.bbox.map((n) => Math.round(n)).join(", ")}]
-                        </p>
-                      </div>
-                      <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-                        isViolation
-                          ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                          : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                      }`}>
-                        {(d.confidence * 100).toFixed(0)}%
-                      </span>
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="h-full flex items-center justify-center p-8 text-center">
-                  <span className="text-xs text-zinc-500">
-                    {preview ? "No objects detected above threshold" : "Upload an image to view detections"}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="bg-gray-900/60 border border-gray-800 p-3 rounded-lg">
+                  <span className="text-xs text-gray-500 block">Total Detections</span>
+                  <span className="text-xl font-bold font-mono text-white">
+                    {result.total_objects}
                   </span>
                 </div>
-              )}
+                {Object.entries(result.class_counts || {}).map(([cls, cnt]) => (
+                  <div key={cls} className="bg-gray-900/60 border border-gray-800 p-3 rounded-lg">
+                    <span className="text-xs text-gray-500 block capitalize">{cls}</span>
+                    <span className="text-xl font-bold font-mono text-indigo-400">{cnt}</span>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        </div>
+          )}
+        </section>
       </main>
     </div>
   );
