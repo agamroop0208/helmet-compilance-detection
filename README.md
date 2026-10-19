@@ -1,6 +1,6 @@
 Motorcycle Helmet Compliance Detection System
 
-A full-stack computer vision system built with YOLOv8, FastAPI, and React (Vite) for real-time motorcycle helmet compliance monitoring. The architecture decouples PyTorch model inference into an asynchronous REST microservice paired with a clean web dashboard.
+A full-stack computer vision system built with YOLO26n, FastAPI, and React (Vite) for real-time motorcycle helmet compliance monitoring. The architecture decouples PyTorch model inference into an asynchronous REST microservice paired with a clean web dashboard.
 
 System Architecture:
 HelmetDetection/
