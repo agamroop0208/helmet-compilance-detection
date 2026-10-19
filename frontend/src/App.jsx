@@ -68,7 +68,7 @@ export default function App() {
     if (!result?.detections?.length) return;
     const headers = "Class ID,Class Name,Confidence,X_Min,Y_Min,X_Max,Y_Max\n";
     const rows = result.detections
-      .map((d) => `${d.class_id},${d.class_name},${d.confidence},${d.bbox.join(",")}`)
+      .map((d) => `${d.class_id ?? 0},${d.class_name ?? "object"},${d.confidence},${d.bbox ? d.bbox.join(",") : ""}`)
       .join("\n");
     const blob = new Blob([headers + rows], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -78,6 +78,16 @@ export default function App() {
     link.click();
     URL.revokeObjectURL(url);
   };
+
+  // Safe fallback telemetry calculations
+  const detectionsList = result?.detections || [];
+  const totalObjects = result?.total_objects ?? detectionsList.length;
+  
+  const classCounts = result?.class_counts || detectionsList.reduce((acc, d) => {
+    const name = d.class_name || "object";
+    acc[name] = (acc[name] || 0) + 1;
+    return acc;
+  }, {});
 
   return (
     <div className="min-h-screen bg-[#090a0f] text-gray-200 flex flex-col font-sans">
@@ -220,10 +230,10 @@ export default function App() {
                 <div className="bg-gray-900/60 border border-gray-800 p-3 rounded-lg">
                   <span className="text-xs text-gray-500 block">Total Detections</span>
                   <span className="text-xl font-bold font-mono text-white">
-                    {result.total_objects}
+                    {totalObjects}
                   </span>
                 </div>
-                {Object.entries(result.class_counts || {}).map(([cls, cnt]) => (
+                {Object.entries(classCounts).map(([cls, cnt]) => (
                   <div key={cls} className="bg-gray-900/60 border border-gray-800 p-3 rounded-lg">
                     <span className="text-xs text-gray-500 block capitalize">{cls}</span>
                     <span className="text-xl font-bold font-mono text-indigo-400">{cnt}</span>
